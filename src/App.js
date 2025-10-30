@@ -2,87 +2,88 @@ import React, { useState, useEffect } from 'react';
 import LoginScreen from './components/LoginScreen';
 import ChatScreen from './components/ChatScreen'; 
 import './App.css';
-// NOVO: Importa o cliente Supabase
-import { supabase } from './supabaseClient'; 
+import { supabase } from './supabaseClient'; // <-- NOVO: Importa cliente Supabase
 
 function App() {
-  // O estado 'user' agora armazena o nome/email do usuário logado.
-  const [user, setUser] = useState(null); 
-  // Estado para controlar a exibição da tela de carregamento inicial (session loading)
-  const [loading, setLoading] = useState(true); 
+  const [user, setUser] = useState(null);
+  // Estado para simular que o cliente Supabase está pronto para uso
+  const [isReady, setIsReady] = useState(false); 
 
-  // --- Listener de Autenticação Supabase (Gestão de Estado) ---
+  // Efeito principal: Verifica a sessão do Supabase e carrega o nome do perfil.
   useEffect(() => {
-    // 1. Busca a sessão inicial
-    const fetchSession = async () => {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        
-        if (error) {
-            console.error("Erro ao buscar sessão inicial:", error);
-        }
+    
+    // 1. Função que busca o username na tabela 'profiles'
+    const fetchUserProfile = async (user) => {
+        // Busca o perfil na nova tabela 'profiles'
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select(`username`) // Apenas precisamos do nome
+            .eq('id', user.id)
+            .single();
 
-        // Se houver sessão, define o usuário (usamos o email como nome de usuário)
-        if (session) {
-            setUser(session.user.email || 'Usuário Desconhecido'); 
+        if (error || !profile) {
+            console.warn("[App] Perfil não encontrado. Usando a primeira parte do e-mail como fallback.");
+            // Fallback: Se não achar perfil, usa a primeira parte do email
+            setUser(user.email ? user.email.split('@')[0] : 'Desconhecido');
+        } else {
+            // SUCESSO: Define o estado 'user' com o nome do perfil.
+            setUser(profile.username);
         }
-        setLoading(false); // Carregamento inicial completo
-
-        // 2. Inicia o listener de mudanças de estado (Login/Logout)
-        const { data: authListener } = supabase.auth.onAuthStateChange(
-            async (event, currentSession) => {
-                if (currentSession) {
-                    // Logado: Define o usuário com o email da sessão
-                    setUser(currentSession.user.email || 'Usuário');
-                } else {
-                    // Deslogado: Limpa o estado
-                    setUser(null);
-                }
-            }
-        );
-        
-        return () => {
-            // Limpeza: Remove o listener ao desmontar o componente
-            authListener?.subscription.unsubscribe();
-        };
     };
 
-    fetchSession();
+    // 2. Ouve eventos de autenticação (LOGIN, LOGOUT)
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          fetchUserProfile(session.user);
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+        }
+      }
+    );
+
+    // 3. Busca a sessão inicial ao carregar (para quem já estava logado)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+            fetchUserProfile(session.user);
+        } 
+        
+        // Ativa o isReady (Substitui o setTimeout antigo)
+        // Isso garante que a tela de login/chat só apareça após a verificação da sessão.
+        setTimeout(() => { setIsReady(true); }, 500); 
+    });
+
+
+    // 4. Limpeza: Remove o listener de autenticação
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
   }, []); 
-  
-  // Função chamada pelo LoginScreen (Agora é um placeholder, pois o useEffect lida com o estado)
+
+  // Função chamada pelo LoginScreen (Para o login manual sem OAuth)
   const handleLogin = (username) => {
-    // O estado do usuário será atualizado pelo listener 'onAuthStateChange'
-    // após o LoginScreen chamar supabase.auth.signIn()
-    console.log(`Tentativa de Login para: ${username}. Aguardando confirmação do listener Supabase.`);
+    setUser(username); 
   };
 
-
-  // --- Função de Logout (CORRIGIDA) ---
+  // Função chamada pelo ChatScreen (botão Sair)
   const handleLogout = async () => {
-    const { error } = await supabase.auth.signOut(); 
-
+    const { error } = await supabase.auth.signOut();
     if (error) {
-        console.error("[Supabase] Erro ao fazer logout:", error);
-        alert("Falha ao sair. Tente novamente.");
+        console.error("Erro ao sair:", error);
     }
-    // O listener 'onAuthStateChange' fará o trabalho de definir setUser(null)
+    // O authListener (useEffect) cuidará de chamar setUser(null) após o signOut ser concluído
   };
 
   return (
     <div className="App">
-      {/* Se estiver carregando a sessão inicial */}
-      {loading ? (
-          <div className="loading-screen">Carregando Sessão...</div>
+      {/* Se o cliente não estiver pronto, mostra um loading screen simples */}
+      {!isReady ? (
+          <div className="loading-screen">Carregando Serviço de Chat...</div>
       ) : !user ? (
-        // Tela de Login
         <LoginScreen onLogin={handleLogin} /> 
       ) : (
-        // Tela de Chat (isReady é true pois a sessão foi carregada)
-        <ChatScreen 
-            user={user} 
-            isReady={true} 
-            onLogout={handleLogout} 
-        />
+        /* Passamos 'isReady' no lugar de 'socket'. */
+        <ChatScreen user={user} isReady={isReady} onLogout={handleLogout} />
       )}
     </div>
   );
