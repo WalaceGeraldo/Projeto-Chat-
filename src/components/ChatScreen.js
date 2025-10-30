@@ -1,218 +1,177 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './Sidebar';
 import ChatWindow from './ChatWindow';
-import ImageModal from './ImageModal';
+import ImageModal from './ImageModal'; 
 import './ChatScreen.css';
+import { supabase } from '../supabaseClient'; // <-- Mantenha a importação do Supabase
 
-const INACTIVITY_TIMEOUT = 60 * 1000;
+// --- REMOVIDO: Não há mais imports do Firebase aqui ---
 
-function ChatScreen({ user, socket, onLogout }) {
+function ChatScreen({ user, isReady, onLogout }) { 
   // --- Estados do Componente ---
-  // eslint-disable-next-line no-unused-vars
-  const [activeChannel, setActiveChannel] = useState({ id: 1, name: 'Geral' });
+  const [activeChannel, setActiveChannel] = useState({ id: 'Geral', name: 'Geral', type: 'channel' });
   const [onlineUsersList, setOnlineUsersList] = useState([]);
-  const [allMessages, setAllMessages] = useState([]);
+  const [allMessages, setAllMessages] = useState([]); 
   const [unreadCounts, setUnreadCounts] = useState({});
-  const [isIdle, setIsIdle] = useState(false);
-  const inactivityTimerRef = useRef(null);
-  const [modalImage, setModalImage] = useState(null);
-  const [isHistoryLoading, setIsHistoryLoading] = useState(false); // Mantido para simular loading
+  const [modalImage, setModalImage] = useState(null); 
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false); 
 
   const activeChannelRef = useRef(activeChannel);
   useEffect(() => {
       activeChannelRef.current = activeChannel;
   }, [activeChannel]);
 
-  // --- Funções de Modal ---
-  const openImageModal = useCallback((imageUrl) => {
-      setModalImage(imageUrl);
-  }, []);
+  // --- Funções de Modal (Implementação simplificada) ---
+  const openImageModal = useCallback((imageUrl) => { setModalImage(imageUrl); }, []);
+  const closeImageModal = useCallback(() => { setModalImage(null); }, []);
 
-  const closeImageModal = useCallback(() => {
-      setModalImage(null);
-  }, []);
-  // -------------------------
+  // --- Lógica de Inatividade (Simplificada/Removida a dependência do socket) ---
+  const resetInactivityTimer = useCallback(() => { /* ... */ }, []); 
+  useEffect(() => { /* ... */ }, [resetInactivityTimer]);
 
-  // --- Lógica de Detecção de Inatividade ---
-  const resetInactivityTimer = useCallback(() => {
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
-    }
-    
-    setIsIdle(prevIsIdle => {
-        if (prevIsIdle && socket) {
-            socket.emit('userActive');
-            return false;
-        }
-        return prevIsIdle;
-    });
-    
-    inactivityTimerRef.current = setTimeout(() => {
-        setIsIdle(true);
-        if (socket) {
-            socket.emit('userInactive');
-        }
-    }, INACTIVITY_TIMEOUT);
-    
-  }, [socket, setIsIdle]);
+  // Função auxiliar para formatar a mensagem do Supabase
+  const formatSupabaseMessage = (message) => ({
+      ...message,
+      id: message.id, 
+      // O 'created_at' do Supabase já é uma string de data válida
+      timestamp: new Date(message.created_at), 
+      type: message.type || 'text',
+      content: message.content || message.caption, // Prioriza o 'content' ou 'caption'
+  });
 
+
+  // --- NOVO useEffect: LISTENERS DO SUPABASE REALTIME ---
   useEffect(() => {
-    const activityEvents = ['mousemove', 'keydown', 'mousedown', 'touchstart'];
-    activityEvents.forEach(event => window.addEventListener(event, resetInactivityTimer));
-    resetInactivityTimer();
-    return () => {
-      activityEvents.forEach(event => window.removeEventListener(event, resetInactivityTimer));
-      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    if (!isReady) {
+      setIsHistoryLoading(true); 
+      return;
+    }
+
+    setIsHistoryLoading(true); 
+    const channelName = activeChannel.name; 
+    let realTimeSubscription = null;
+
+    // 1. FUNÇÃO PARA CARREGAR O HISTÓRICO INICIAL
+    const fetchInitialHistory = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('messages')
+                .select('*')
+                .eq('channel_name', channelName) // Filtra pelo nome do canal ativo
+                .order('created_at', { ascending: true }); // Ordena por data
+            
+            if (error) throw error;
+            
+            const initialMessages = data.map(formatSupabaseMessage);
+            setAllMessages(initialMessages);
+            setIsHistoryLoading(false);
+            console.log(`[Supabase] Histórico inicial de ${channelName} carregado.`);
+        } catch (error) {
+            console.error("[Supabase] Erro ao carregar histórico:", error.message);
+            setIsHistoryLoading(false);
+        }
     };
-  }, [resetInactivityTimer]);
-
-
-  // --- useEffect Principal para Listeners do Socket ---
-  useEffect(() => {
-    if (socket) {
-      
-      const incrementUnread = (conversationId) => {
-          const currentActive = activeChannelRef.current;
-          let currentConversationId;
-          if (currentActive.type === 'dm') {
-              currentConversationId = 'dm-' + currentActive.id;
-          } else {
-              currentConversationId = currentActive.id || currentActive.name;
-          }
-
-          if (conversationId !== currentConversationId) {
-                setUnreadCounts(prev => ({ ...prev, [conversationId]: (prev[conversationId] || 0) + 1 }));
-          }
-      };
-
-
-      // Listener para mensagens de CANAL
-      const channelMessageListener = (receivedMessage) => {
-        const displayMessage = {
-           ...receivedMessage,
-           id: receivedMessage.timestamp + Math.random(),
-           timestamp: new Date(receivedMessage.timestamp),
-           type: receivedMessage.type,
-           content: receivedMessage.content,
-           caption: receivedMessage.caption,
-           channel: receivedMessage.channel
-        };
-        setAllMessages((prev) => [...prev, displayMessage]);
-
-        const channelId = receivedMessage.channelId || receivedMessage.channel;
-        if (channelId) {
-            incrementUnread(channelId);
+    
+    // 2. FUNÇÃO PARA INSCREVER-SE EM TEMPO REAL
+    const subscribeToRealtime = () => {
+        // Remove a inscrição anterior, se houver
+        if (realTimeSubscription) {
+            supabase.removeChannel(realTimeSubscription);
         }
-      };
 
-      // Listener para mensagens PRIVADAS (DM)
-      const privateMessageListener = (receivedMessage) => {
-         const displayMessage = {
-              ...receivedMessage,
-              id: receivedMessage.timestamp + Math.random(),
-              timestamp: new Date(receivedMessage.timestamp),
-              type: receivedMessage.type,
-              content: receivedMessage.content,
-              caption: receivedMessage.caption,
-              senderId: receivedMessage.senderId,
-              recipientId: receivedMessage.recipientId,
-         };
-         setAllMessages((prev) => [...prev, displayMessage]);
+        console.log(`[Supabase Realtime] Iniciando escuta em tempo real para: ${channelName}`);
 
-        const dmConversationId = 'dm-' + receivedMessage.senderId;
-        incrementUnread(dmConversationId);
-      };
+        realTimeSubscription = supabase
+            .channel('chat-changes') // Nome do canal Realtime
+            .on(
+                'postgres_changes', 
+                { 
+                    event: 'INSERT', 
+                    schema: 'public', 
+                    table: 'messages',
+                    filter: `channel_name=eq.${channelName}`, // Filtra apenas mensagens do canal atual
+                },
+                (payload) => {
+                    const newMessage = formatSupabaseMessage(payload.new);
+                    console.log("[Supabase Realtime] Nova mensagem recebida:", newMessage);
 
-       // Listener para atualizar a LISTA DE USUÁRIOS online
-       const updateUserListListener = (usersWithStatus) => {
-           setOnlineUsersList(usersWithStatus);
-       };
+                    // Adiciona a nova mensagem ao estado
+                    setAllMessages(prevMessages => {
+                        const conversationId = activeChannelRef.current.name; 
 
-       // Listener de histórico (SIMULADO)
-       const historyLoadedListener = (messages) => {
-            console.log(`[History] Tela limpa para novo histórico (${messages.length} mensagens).`);
-            setAllMessages([]); 
-            setIsHistoryLoading(false); 
-        };
+                        // Lógica para detectar e contar novas mensagens (se não for do usuário atual)
+                        if (newMessage.sender !== user) {
+                            setUnreadCounts(prevCounts => ({
+                                ...prevCounts,
+                                [conversationId]: (prevCounts[conversationId] || 0) + 1 
+                            }));
+                        }
+                        
+                        return [...prevMessages, newMessage];
+                    });
+                }
+            )
+            .subscribe(); // Inicia a escuta
 
-      // Registra os listeners no socket
-      socket.on('receiveMessage', channelMessageListener);
-      socket.on('receivePrivateMessage', privateMessageListener);
-      socket.on('updateUserList', updateUserListListener);
-      socket.on('historyLoaded', historyLoadedListener);
-      
-      socket.emit('requestUserList');
+    };
 
-      return () => {
-        socket.off('receiveMessage', channelMessageListener);
-        socket.off('receivePrivateMessage', privateMessageListener);
-        socket.off('updateUserList', updateUserListListener);
-        socket.off('historyLoaded', historyLoadedListener);
-      };
-    }
-  }, [socket, user]);
-
-
-  // --- Lógica de Simulação de Carregamento ao Mudar de Conversa ---
-  useEffect(() => {
-    if (socket && activeChannel) {
-        setIsHistoryLoading(true);
-        
-        // Simulação de delay de carregamento e limpeza da tela
-        setTimeout(() => {
-             // 1. Emite o pedido de histórico (Backend responde com array vazio)
-             socket.emit('requestHistory', { type: activeChannel.type, identifier: activeChannel.id || activeChannel.name });
-        }, 300);
-    }
-  }, [socket, activeChannel]);
+    // Executa as funções
+    fetchInitialHistory();
+    subscribeToRealtime();
+    
+    // 3. Simulação da Lista de Usuários Online (ainda simulado, pois a implementação nativa é complexa)
+    const users = [
+        { id: 'Ana@exemplo.com', name: 'Ana', status: 'online' }, 
+        { id: 'Bruno@exemplo.com', name: 'Bruno', status: 'online' },
+        { id: 'Carlos@exemplo.com', name: 'Carlos', status: 'idle' },
+    ];
+    setOnlineUsersList(users.filter(u => u.id !== user).map(u => ({...u, id: u.id, name: u.id})));
+    
+    // 4. Limpeza: Remove o listener do Supabase ao desmontar/mudar de canal
+    return () => {
+        if (realTimeSubscription) {
+            supabase.removeChannel(realTimeSubscription); 
+        }
+    };
+  // ATENÇÃO: A dependência 'user' garante que o Realtime reinicie se o usuário mudar
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChannel.name, user, isReady]); 
 
 
   // --- Função para Mudar de Canal/DM e Limpar Não Lidas ---
-   const handleSelectChannel = (channelOrDm) => {
-       setActiveChannel(channelOrDm);
-       let conversationId;
-       if (channelOrDm.type === 'dm') {
-           conversationId = 'dm-' + channelOrDm.id;
-       } else {
-           conversationId = channelOrDm.id || channelOrDm.name;
-       }
-       setUnreadCounts(prev => {
-            const newCounts = { ...prev };
-            if (newCounts[conversationId]) {
-                 newCounts[conversationId] = 0;
-            }
-            return newCounts;
-       });
-   };
+  const handleSelectChannel = (channelOrDm) => {
+    // Limpa as mensagens não lidas para o canal anterior
+    const prevConversationId = activeChannel.name;
+    
+    setUnreadCounts(prevCounts => ({
+        ...prevCounts,
+        [prevConversationId]: 0 
+    }));
 
-   // Dados Simulados para Canais
-   const simulatedData = {
-        channels: [
-          { id: 1, name: 'Geral' },
-          { id: 2, name: 'Frontend' },
-          { id: 3, name: 'Back-End' },
-        ],
-    };
+    // Define o novo canal ativo
+    setActiveChannel(channelOrDm);
+    // Força o recarregamento do histórico
+    setAllMessages([]);
+  };
+   
 
-   // Filtra Mensagens para Exibir na Janela Ativa
-    const messagesToShow = allMessages.filter(msg => {
-        if (!activeChannel || !socket) return false;
-        if (activeChannel.type === 'dm') {
-            return msg.type && (msg.type.includes('image') || msg.type === 'text') &&
-                   ((msg.senderId === socket.id && msg.recipientId === activeChannel.id) ||
-                    (msg.senderId === activeChannel.id && msg.recipientId === socket.id));
-        } else {
-            const channelIdentifier = activeChannel.id || activeChannel.name;
-            const messageChannelIdentifier = msg.channelId || msg.channel;
-            return msg.type && (msg.type.includes('image') || msg.type === 'text') && messageChannelIdentifier === channelIdentifier;
-        }
-    }).sort((a, b) => a.timestamp - b.timestamp);
+  // --- Estrutura de Dados Simulada (para o Sidebar) ---
+  const simulatedData = {
+    channels: [
+      { id: 'Geral', name: 'Geral', type: 'channel' },
+      { id: 'Frontend', name: 'Frontend', type: 'channel' },
+      { id: 'Backend', name: 'Back-End', type: 'channel' },
+    ],
+  };
+
+  // Filtra Mensagens para Exibir na Janela Ativa
+  const messagesToShow = allMessages.filter(msg => 
+    msg.channel_name === activeChannel.name
+  ).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
 
   return (
     <div className="chat-screen-container">
-      {isIdle && console.log(`Status de inatividade: Ausente`)} 
-      
       <Sidebar
         currentUser={user}
         channels={simulatedData.channels}
@@ -226,7 +185,6 @@ function ChatScreen({ user, socket, onLogout }) {
         messagesToShow={messagesToShow}
         channel={activeChannel}
         currentUser={user}
-        socket={socket}
         onImageClick={openImageModal}
         isHistoryLoading={isHistoryLoading}
       />

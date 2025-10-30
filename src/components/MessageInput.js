@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import EmojiPicker from 'emoji-picker-react'; 
+import { supabase } from '../supabaseClient'; // <-- Importar cliente Supabase
 
-// Variável global para armazenar a instância do MediaRecorder
-let mediaRecorder = null; 
-
-// Recebe props adicionais para upload e controle de digitação
-function MessageInput({ onSendMessage, channelName, currentUser, socket, activeChannel }) {
+function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }) { 
   const [text, setText] = useState('');
   const typingTimeoutRef = useRef(null);
   const fileInputRef = useRef(null); 
@@ -15,40 +12,23 @@ function MessageInput({ onSendMessage, channelName, currentUser, socket, activeC
   const [previewUrl, setPreviewUrl] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false); 
 
-  // --- ESTADOS PARA GRAVAÇÃO DE ÁUDIO ---
-  const [isRecording, setIsRecording] = useState(false); 
-  const [audioChunks, setAudioChunks] = useState([]);   
-  const [recordedAudioUrl, setRecordedAudioUrl] = useState(null); 
-  const [audioBlob, setAudioBlob] = useState(null); 
-  // ----------------------------------------
 
-
-  // Efeito de Limpeza: Revoga URLs temporárias do navegador ao limpar
+  // Efeito de Limpeza: Revoga URLs temporárias do navegador
   useEffect(() => {
     return () => {
         if (previewUrl) { URL.revokeObjectURL(previewUrl); }
-        if (recordedAudioUrl) { URL.revokeObjectURL(recordedAudioUrl); } 
     };
-  }, [previewUrl, recordedAudioUrl]);
+  }, [previewUrl]);
 
 
-  // Função para emitir evento de digitação
+  // Função para emitir evento de digitação (Simplificada)
   const emitTypingEvent = (eventType) => {
-    if (socket && activeChannel) {
-      const typingData = {
-        userId: socket.id,
-        userName: currentUser,
-        conversationId: activeChannel.type === 'dm' ? ('dm-' + activeChannel.id) : (activeChannel.id || activeChannel.name),
-        isDM: activeChannel.type === 'dm',
-        recipientId: activeChannel.type === 'dm' ? activeChannel.id : null
-      };
-      socket.emit(eventType, typingData);
-    }
+    // A lógica de digitação real será implementada via API Realtime do Supabase no ChatScreen.
   };
 
-  // Efeito para detectar início/fim da digitação (inclui todas as mídias)
+  // Efeito para detectar início/fim da digitação (simplificado)
   useEffect(() => {
-    const isTyping = text.trim().length > 0 || selectedFile || recordedAudioUrl;
+    const isTyping = text.trim().length > 0 || selectedFile;
     
     if (isTyping) {
       emitTypingEvent('typingStart');
@@ -56,106 +36,53 @@ function MessageInput({ onSendMessage, channelName, currentUser, socket, activeC
       typingTimeoutRef.current = setTimeout(() => {
         emitTypingEvent('typingStop');
       }, 1500); 
-    } else if (typingTimeoutRef.current) {
-       emitTypingEvent('typingStop');
-       clearTimeout(typingTimeoutRef.current);
-       typingTimeoutRef.current = null;
-    }
+    } else if (typingTimeoutRef.current) { /* Ação de limpeza de timer */ }
 
-    return () => {
-      if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); }
-    };
+    return () => { /* Ação de limpeza de listener */ };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, selectedFile, recordedAudioUrl, socket, activeChannel, currentUser]); 
+  }, [text, selectedFile, currentUser, activeChannel]); 
 
 
-  // --- FUNÇÃO DE LIMPEZA GERAL DE INPUTS (e revogar URL) ---
+  // --- FUNÇÃO DE LIMPEZA GERAL DE INPUTS ---
   const clearInputs = () => {
     setText('');
     setSelectedFile(null);
     if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
-    if (recordedAudioUrl) { URL.revokeObjectURL(recordedAudioUrl); setRecordedAudioUrl(null); }
-    setAudioBlob(null);
-    setAudioChunks([]);
-    // Garante que o input de arquivo esteja limpo no DOM (para imagens)
-    if(fileInputRef.current) { fileInputRef.current.value = ''; }
   };
 
 
   // Função para lidar com a seleção de arquivo (apenas imagem)
-  const handleFileChange = (event) => {
+  const handleFileChange = (event) => { 
     const file = event.target.files[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-        alert('Por favor, selecione um arquivo de imagem.');
-        return;
+    if (file) {
+        setSelectedFile(file);
+        // Cria uma URL de pré-visualização temporária no navegador
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+        setText(''); // Limpa o texto normal
     }
+    // Limpa o valor do input de arquivo para permitir upload do mesmo arquivo novamente
+    event.target.value = null; 
+  };
+  
+  // Função auxiliar para disparar o input de arquivo oculto
+  const triggerFileInput = () => {
+    fileInputRef.current.click();
+  };
 
-    if (previewUrl) { URL.revokeObjectURL(previewUrl); }
-    // Limpa áudio se for selecionada imagem
-    if (recordedAudioUrl) { clearInputs(); } 
-
-    const url = URL.createObjectURL(file);
-    setSelectedFile(file);
-    setPreviewUrl(url);
-    
-    event.target.value = '';
+  // Função para adicionar emoji ao input
+  const onEmojiClick = (emojiData) => {
+    setText(prevText => prevText + emojiData.emoji);
+    setShowEmojiPicker(false); // Fecha o picker após a seleção
   };
 
 
-  // --- Lógica de Gravação de Áudio ---
-  const startRecording = async () => {
-    clearInputs(); // Limpa tudo antes de começar a gravar
-    
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // Cria o MediaRecorder (com o tipo suportado pelo backend: audio/webm)
-      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      
-      mediaRecorder.ondataavailable = (event) => {
-        setAudioChunks(prev => [...prev, event.data]);
-      };
-      
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        
-        setRecordedAudioUrl(audioUrl); 
-        setAudioBlob(audioBlob);       
-        setAudioChunks([]);            
-        
-        stream.getTracks().forEach(track => track.stop());
-      };
-      
-      mediaRecorder.start();
-      setIsRecording(true);
-      console.log('Gravação de áudio iniciada.');
-      
-    } catch (err) {
-      console.error('Erro ao acessar o microfone:', err);
-      alert('Não foi possível acessar o microfone. Verifique as permissões.');
-      setIsRecording(false);
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stop();
-      setIsRecording(false);
-      console.log('Gravação de áudio parada.');
-    }
-  };
-  // ------------------------------------------
-
-
-  // --- FUNÇÃO PRINCIPAL DE ENVIO (Unificada) ---
+  // --- FUNÇÃO PRINCIPAL DE ENVIO (Upload para Supabase Storage) ---
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const canSend = text.trim().length > 0 || selectedFile || audioBlob;
-    if (!canSend || isUploading || isRecording) return; 
+    const canSend = text.trim().length > 0 || selectedFile;
+    if (!canSend || isUploading) return;
 
     setIsUploading(true);
 
@@ -163,43 +90,50 @@ function MessageInput({ onSendMessage, channelName, currentUser, socket, activeC
     let fileUrl = null;
     let fileType = null;
     
-    let fileToUpload = selectedFile || audioBlob;
+    let fileToUpload = selectedFile;
     
-    // 1. Lógica de Upload de Mídia (HTTP)
+    // 1. Lógica de Upload de Mídia para Supabase Storage
     if (fileToUpload) {
-        const formData = new FormData();
         
-        const fileName = fileToUpload instanceof Blob ? `audio-${Date.now()}.webm` : fileToUpload.name;
-        // O nome do campo é 'mediaFile' (o backend espera isso)
-        formData.append('mediaFile', fileToUpload, fileName); 
-
+        fileType = fileToUpload.type;
+        const fileExtension = fileType.split('/')[1] || 'jpg';
+        
+        // Define o caminho no Storage (Ex: 'images/timestamp-user.jpg')
+        const filePath = `images/${Date.now()}-${currentUser.replace(/[^a-zA-Z0-9]/g, '_')}.${fileExtension}`;
+        
         try {
-            const response = await fetch('http://localhost:4000/upload', {
-                method: 'POST', body: formData,
-            });
+            // CORREÇÃO: Removemos 'data' para evitar o aviso ESLint (linha 106)
+            const { error } = await supabase.storage 
+                .from('chat-media') // Nome do bucket no Supabase
+                .upload(filePath, fileToUpload, {
+                    cacheControl: '3600',
+                    upsert: false
+                });
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ error: response.statusText }));
-                throw new Error(errorData.error || `Erro no upload: ${response.statusText}`);
+            if (error) {
+                throw new Error(error.message);
             }
 
-            const result = await response.json();
-            fileUrl = result.fileUrl; 
-            fileType = result.fileType; 
+            // Obtém a URL pública direta da imagem
+            const { data: publicUrlData } = supabase.storage
+                .from('chat-media')
+                .getPublicUrl(filePath);
+                
+            fileUrl = publicUrlData.publicUrl;
+            
+            console.log('[Supabase] Upload de imagem bem-sucedido. URL:', fileUrl);
             
         } catch (error) {
-            console.error("Falha no upload de mídia:", error);
-            alert(`Erro ao enviar mídia: ${error.message}`);
+            console.error("[Supabase] Falha no upload:", error);
+            alert(`Erro ao enviar mídia para o Storage: ${error.message}. Verifique as regras do Storage.`);
             setIsUploading(false);
             return;
         }
     }
 
-    // 2. Determina o Tipo de Mensagem para o Socket
+    // 2. Determina o Tipo de Mensagem
     let type;
-    if (fileType?.startsWith('audio')) {
-        type = 'audio';
-    } else if (fileType?.startsWith('image') && messageText) {
+    if (fileType?.startsWith('image') && messageText) {
         type = 'text-with-image';
     } else if (fileType?.startsWith('image')) {
         type = 'image';
@@ -207,116 +141,67 @@ function MessageInput({ onSendMessage, channelName, currentUser, socket, activeC
         type = 'text'; 
     }
 
-    // Envia a mensagem (texto, url, tipo) para o ChatWindow (e de lá para o socket)
-    onSendMessage(
-        messageText, 
-        fileUrl, 
-        type
-    ); 
+    // Envia a mensagem para o ChatWindow, que a salvará no Supabase DB
+    onSendMessage(messageText, fileUrl, type); 
 
     // Limpeza após envio bem-sucedido
     clearInputs(); 
     setIsUploading(false);
     emitTypingEvent('typingStop');
   };
+  // --------------------------------------------------------------------------
 
-  const triggerFileInput = () => {
-    // Limpa áudio gravado se for selecionar imagem
-    if (recordedAudioUrl) { clearInputs(); }
-    fileInputRef.current?.click();
-  };
-  
-  const onEmojiClick = (emojiData) => {
-    setText(prevText => prevText + emojiData.emoji);
-    setShowEmojiPicker(false); 
-  };
+  const isDisabled = isUploading || (!text.trim() && !selectedFile);
 
-
-  const isDisabled = isUploading || isRecording || (!text.trim() && !selectedFile && !audioBlob);
-  const showTextInput = !isRecording && !recordedAudioUrl;
 
   return (
     <div className="message-input-wrapper">
       
       {/* Seletor de Emojis */}
       {showEmojiPicker && (
-          <div className="emoji-picker-container">
-              <EmojiPicker 
-                  onEmojiClick={onEmojiClick} 
-                  height={350} 
-                  width="100%" 
-                  theme="dark"
-                  searchDisabled={false} 
-                  lazyLoadEmojis={true}
-              />
-          </div>
+        <div className="emoji-picker-container">
+          <EmojiPicker onEmojiClick={onEmojiClick} height={300} width="100%" />
+        </div>
       )}
 
       {/* Preview de Imagem Selecionada */}
       {previewUrl && (
-          <div className="image-preview-container">
-              <img src={previewUrl} alt="Pré-visualização" className="image-preview" />
-              <button type="button" onClick={clearInputs} className="remove-preview-button">
-                  <i className="fas fa-times-circle"></i>
-              </button>
-          </div>
+        <div className="image-preview-container">
+          <img src={previewUrl} alt="Preview" className="image-preview" />
+          <button 
+            type="button" 
+            className="remove-preview-button" 
+            onClick={clearInputs}
+          >
+            <i className="fas fa-times"></i>
+          </button>
+        </div>
       )}
       
-      {/* Preview de Áudio Gravado */}
-      {recordedAudioUrl && (
-          <div className="audio-preview-container">
-            <audio src={recordedAudioUrl} controls className="audio-player" />
-            <button type="button" onClick={clearInputs} className="remove-preview-button">
-                <i className="fas fa-times-circle"></i>
-            </button>
-            <input
-                type="text"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Adicione um comentário ao áudio (opcional)"
-                className="audio-comment-input"
-            />
-          </div>
-      )}
       
       <form className="message-input-form" onSubmit={handleSubmit}>
         
-        {/* Botão de Gravação de Áudio */}
-        {/* Mostra o microfone (iniciar/parar) se não houver mídia pré-selecionada */}
-        {!recordedAudioUrl && selectedFile === null && ( 
-            <button
-                type="button"
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`audio-record-button ${isRecording ? 'recording' : ''}`}
-                disabled={isUploading}
-                title={isRecording ? 'Parar Gravação' : 'Gravar Áudio'}
-            >
-                <i className={`fas ${isRecording ? 'fa-stop-circle' : 'fa-microphone'}`}></i>
-            </button>
-        )}
-        
-        {/* Botões de Emojis e Anexo */}
-        <button type="button" onClick={() => setShowEmojiPicker(prev => !prev)} className="emoji-button" disabled={isUploading || isRecording} title="Selecionar Emoji">
+        {/* Botão de Emojis */}
+        <button type="button" onClick={() => setShowEmojiPicker(prev => !prev)} className="emoji-button" disabled={isUploading} title="Selecionar Emoji">
             <i className="fas fa-smile"></i> 
         </button>
 
-        <button type="button" onClick={triggerFileInput} className="attach-button" disabled={isUploading || isRecording || recordedAudioUrl !== null} title="Anexar Imagem">
+        {/* Botão de Anexar Imagem */}
+        <button type="button" onClick={triggerFileInput} className="attach-button" disabled={isUploading} title="Anexar Imagem">
             <i className={`fas ${isUploading ? 'fa-spinner fa-spin' : 'fa-paperclip'}`}></i>
         </button>
 
-        {/* Input de texto (visível se não estiver gravando ou com áudio para enviar) */}
-        {showTextInput && ( 
-            <input
-              type="text"
-              id="message-input"
-              name="message"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={selectedFile ? "Adicione um comentário (opcional)" : `Conversar em ${channelName}`}
-              autoComplete="off"
-              disabled={isUploading || isRecording}
-            />
-        )}
+        {/* Input de texto */}
+        <input
+          type="text"
+          id="message-input"
+          name="message"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={selectedFile ? "Adicione um comentário (opcional)" : `Conversar em ${channelName}`}
+          autoComplete="off"
+          disabled={isUploading}
+        />
         
         {/* Botão de enviar texto/imagem/áudio */}
         <button type="submit" disabled={isDisabled}>

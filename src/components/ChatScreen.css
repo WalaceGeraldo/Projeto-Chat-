@@ -305,7 +305,67 @@
   cursor: not-allowed;
 }
 
-/* --- Estilos de Emojis --- */
+/* --- ESTILOS DE ÁUDIO E GRAVAÇÃO (NOVOS) --- */
+
+/* Botão do Microfone */
+.audio-record-button {
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 10px 12px 10px 0;
+  margin-right: 8px;
+  transition: color 0.2s ease;
+  flex-shrink: 0;
+}
+.audio-record-button:hover:not(:disabled) {
+    color: #007bff;
+}
+
+/* Animação de gravação (vermelho piscante) */
+@keyframes pulse {
+    0% { color: #dc3545; }
+    50% { color: #ff8e98; }
+    100% { color: #dc3545; }
+}
+
+.audio-record-button.recording {
+    color: #dc3545; /* Cor vermelha quando gravando */
+    animation: pulse 1s infinite;
+}
+
+/* Player de áudio nativo dentro da mensagem */
+.message-audio-player {
+    width: 250px; /* Largura padrão para o player de áudio */
+    height: 35px;
+    margin-bottom: 5px;
+    filter: invert(1); /* Tenta inverter para ser visível no tema escuro */
+}
+
+/* Container de Preview de Áudio (quando gravado) */
+.audio-preview-container {
+    display: flex;
+    align-items: center;
+    max-width: 100%;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: #1f1f1f;
+    border: 1px solid #333;
+    border-radius: 8px;
+    position: relative;
+}
+
+.audio-preview-container .audio-comment-input {
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    padding: 8px;
+    margin-left: 10px;
+    color: #e0e0e0;
+    flex-grow: 1;
+}
+
+/* --- Estilos de Emojis e Imagem (Resto, sem alterações) --- */
 
 .emoji-button { 
     background: none;
@@ -334,30 +394,10 @@
 }
 
 
-/* --- Estilos de Upload e Pré-visualização --- */
-.attach-button {
-  background: none;
-  border: none;
-  color: #aaa;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 10px 12px 10px 0;
-  margin-right: 8px;
-  transition: color 0.2s ease;
-}
-
-.attach-button:hover:not(:disabled) {
-  color: #007bff;
-}
-
-.attach-button:disabled {
-    cursor: not-allowed;
-    color: #555;
-}
-
+/* Área de Pré-Visualização de Imagem */
 .image-preview-container {
     position: relative;
-    max-width: 300px; /* Limita o tamanho da miniatura */
+    max-width: 300px;
     margin-bottom: 10px;
     margin-top: 5px;
     border: 1px solid #444;
