@@ -1,24 +1,24 @@
 /* --- Container Principal --- */
 .chat-screen-container {
-  display: flex; /* Define como container flex (horizontal por padrão) */
+  display: flex; 
   width: 100vw;
   height: 100vh;
   max-width: 100%;
-  background-color: #1a1a1a; /* Fundo escuro principal */
+  background-color: #1a1a1a; 
   color: #e0e0e0;
 }
 
 /* --- Sidebar --- */
 .sidebar {
-  width: 260px; /* Largura fixa da sidebar */
-  background-color: #161616; /* Um pouco mais escuro */
-  display: flex; /* Define como container flex... */
-  flex-direction: column; /* ...com itens internos organizados verticalmente */
+  width: 260px; 
+  background-color: #161616; 
+  display: flex; 
+  flex-direction: column; 
   padding: 15px;
   border-right: 1px solid #303030;
-  flex-shrink: 0; /* IMPEDE que a sidebar encolha horizontalmente */
-  overflow-x: hidden; /* Esconde scroll horizontal se o nome for muito grande */
-  overflow-y: auto;   /* Permite scroll vertical se o conteúdo for maior que a altura */
+  flex-shrink: 0; 
+  overflow-x: hidden; 
+  overflow-y: auto;   
 }
 
 .sidebar-header {
@@ -149,9 +149,9 @@
 
 /* --- Janela de Chat (Direita) --- */
 .chat-window {
-  flex-grow: 1;
-  display: flex;
-  flex-direction: column;
+  flex-grow: 1; 
+  display: flex; 
+  flex-direction: column; 
   background-color: #1a1a1a;
   overflow: hidden;
 }
@@ -162,7 +162,7 @@
   background-color: #1a1a1a;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   z-index: 10;
-  flex-shrink: 0;
+  flex-shrink: 0; 
 }
 .chat-header h3 {
   margin: 0;
@@ -175,10 +175,19 @@
 }
 
 
-/* --- Lista de Mensagens --- */
+/* --- Contêiner da Lista de Mensagens (O NOVO FLEX-GROW: 1) --- */
+.chat-messages-container {
+    flex-grow: 1; /* CRÍTICO: Absorve TODO o espaço livre verticalmente */
+    display: flex;
+    flex-direction: column; 
+    overflow-y: hidden; /* Ocultamos o scroll aqui */
+}
+
+/* --- Lista de Mensagens Interna --- */
 .message-list {
-  flex-grow: 1;
-  overflow-y: auto;
+  /* REMOVIDO: flex-grow: 1. A expansão é feita no contêiner pai. */
+  flex-grow: 1; /* MANTENDO PARA SEGURANÇA */
+  overflow-y: auto; /* A BARRA DE ROLAGEM VAI AQUI */
   padding: 20px 25px;
   display: flex;
   flex-direction: column;
@@ -223,18 +232,27 @@
 }
 
 /* Estilo para balão de mensagens de OUTRAS pessoas (balão cinza) */
+.other-message {
+    align-self: flex-start; /* Alinha mensagens de outros à esquerda */
+}
+.other-message .message-sender {
+    text-align: left; /* Alinha nome do remetente à esquerda */
+}
 .other-message .message-content {
   background-color: #2c2c2c;
-  border-top-right-radius: 5px;
+  border-top-left-radius: 5px;
+}
+.other-message .message-timestamp {
+  text-align: left;
 }
 .other-message.consecutive .message-sender {
     display: none;
 }
-.other-message .message-timestamp {
-  color: #888;
-}
 
 /* Estilo para balão de NOSSAS mensagens (balão azul) */
+.my-message {
+    align-self: flex-end; /* Mantém mensagens próprias à direita */
+}
 .my-message .message-content {
   background-color: #0056b3;
   color: #fff;
@@ -250,7 +268,7 @@
 
 /* --- Input de Mensagem (Base) --- */
 .message-input-wrapper {
-    flex-shrink: 0;
+    flex-shrink: 0; /* CRÍTICO: Impede que o wrapper do input encolha */
     padding: 10px 25px 20px;
     background-color: #1a1a1a;
     border-top: 1px solid #303030;
@@ -305,21 +323,31 @@
   cursor: not-allowed;
 }
 
-/* --- ESTILOS DE ÁUDIO E GRAVAÇÃO (NOVOS) --- */
-
-/* Botão do Microfone */
+/* Estilos dos Botões de Ação (Emoji, Áudio, Anexo) */
+.emoji-button, .audio-record-button, .attach-button { 
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 10px 12px 10px 0;
+    margin-right: 8px;
+    transition: color 0.2s ease;
+    flex-shrink: 0;
+    /* Ajuste de margem para o primeiro botão (Emoji) */
+    margin-left: 0; 
+    padding-left: 0;
+}
 .audio-record-button {
-  background: none;
-  border: none;
-  color: #aaa;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 10px 12px 10px 0;
-  margin-right: 8px;
-  transition: color 0.2s ease;
-  flex-shrink: 0;
+    color: #fff; /* Microfone destacado */
+}
+.emoji-button:hover:not(:disabled) {
+    color: #ffc107;
 }
 .audio-record-button:hover:not(:disabled) {
+    color: #dc3545; /* Vermelho para áudio */
+}
+.attach-button:hover:not(:disabled) {
     color: #007bff;
 }
 
@@ -331,59 +359,16 @@
 }
 
 .audio-record-button.recording {
-    color: #dc3545; /* Cor vermelha quando gravando */
+    color: #dc3545; 
     animation: pulse 1s infinite;
 }
 
-/* Player de áudio nativo dentro da mensagem */
-.message-audio-player {
-    width: 250px; /* Largura padrão para o player de áudio */
-    height: 35px;
-    margin-bottom: 5px;
-    filter: invert(1); /* Tenta inverter para ser visível no tema escuro */
-}
 
-/* Container de Preview de Áudio (quando gravado) */
-.audio-preview-container {
-    display: flex;
-    align-items: center;
-    max-width: 100%;
-    margin-bottom: 10px;
-    padding: 10px;
-    background-color: #1f1f1f;
-    border: 1px solid #333;
-    border-radius: 8px;
-    position: relative;
-}
-
-.audio-preview-container .audio-comment-input {
-    background-color: #2a2a2a;
-    border: 1px solid #444;
-    padding: 8px;
-    margin-left: 10px;
-    color: #e0e0e0;
-    flex-grow: 1;
-}
-
-/* --- Estilos de Emojis e Imagem (Resto, sem alterações) --- */
-
-.emoji-button { 
-    background: none;
-    border: none;
-    color: #aaa;
-    font-size: 1.2rem;
-    cursor: pointer;
-    padding: 10px 12px 10px 0;
-    margin-right: 8px;
-    transition: color 0.2s ease;
-    flex-shrink: 0;
-}
-.emoji-button:hover:not(:disabled) {
-    color: #ffc107;
-}
+/* --- Estilos de Emojis e Imagem (Apenas reposicionamento para o Flexbox) --- */
 
 .emoji-picker-container {
     position: absolute; 
+    /* Reposicionar o picker para que ele suba do input */
     bottom: 90px; 
     left: 270px; 
     width: 300px; 
@@ -392,7 +377,6 @@
     border-radius: 8px;
     overflow: hidden;
 }
-
 
 /* Área de Pré-Visualização de Imagem */
 .image-preview-container {
@@ -455,36 +439,6 @@
     border-top: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-
-/* --- Estilos para Status Idle (Ausente) --- */
-.channel-list li.idle-user {
-  opacity: 0.7;
-  font-style: italic;
-}
-
-.idle-text {
-  margin-left: 5px;
-  font-size: 0.8em;
-  color: #aaa;
-}
-
-/* --- Estilos para contagem de não lidas --- */
-.unread-badge {
-  background-color: #dc3545;
-  color: white;
-  font-size: 0.75em;
-  font-weight: bold;
-  padding: 2px 6px;
-  border-radius: 10px;
-  min-width: 18px;
-  text-align: center;
-  line-height: 1.3;
-  flex-shrink: 0;
-}
-.idle-text + .unread-badge {
-    margin-left: 5px;
-}
-
 /* --- Estilo para Indicador de Digitação --- */
 .typing-indicator {
   height: 20px;
@@ -497,11 +451,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.typing-indicator span {
-    display: inline-block;
-    max-width: 100%;
 }
 
 /* --- Estilo para Indicador de Carregamento do Histórico --- */

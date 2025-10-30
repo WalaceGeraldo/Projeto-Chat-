@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import EmojiPicker from 'emoji-picker-react'; 
-import { supabase } from '../supabaseClient'; // <-- Importar cliente Supabase
+import { supabase } from '../supabaseClient'; 
 
 function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }) { 
   const [text, setText] = useState('');
   const typingTimeoutRef = useRef(null);
   const fileInputRef = useRef(null); 
   const [isUploading, setIsUploading] = useState(false); 
+  
+  // NOVOS ESTADOS PARA ÁUDIO
+  const [isRecording, setIsRecording] = useState(false); 
 
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -75,6 +78,13 @@ function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }
     setText(prevText => prevText + emojiData.emoji);
     setShowEmojiPicker(false); // Fecha o picker após a seleção
   };
+  
+  // Placeholder para a funcionalidade de gravação de áudio
+  const handleAudioClick = () => {
+      // Aqui você iniciaria a MediaRecorder API para gravar
+      setIsRecording(prev => !prev);
+      alert(isRecording ? 'Parando gravação de áudio...' : 'Iniciando gravação de áudio...');
+  };
 
 
   // --- FUNÇÃO PRINCIPAL DE ENVIO (Upload para Supabase Storage) ---
@@ -102,7 +112,7 @@ function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }
         const filePath = `images/${Date.now()}-${currentUser.replace(/[^a-zA-Z0-9]/g, '_')}.${fileExtension}`;
         
         try {
-            // CORREÇÃO: Removemos 'data' para evitar o aviso ESLint (linha 106)
+            // CORREÇÃO: Removemos 'data' para evitar o aviso ESLint
             const { error } = await supabase.storage 
                 .from('chat-media') // Nome do bucket no Supabase
                 .upload(filePath, fileToUpload, {
@@ -181,9 +191,14 @@ function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }
       
       <form className="message-input-form" onSubmit={handleSubmit}>
         
-        {/* Botão de Emojis */}
+        {/* Botões de Emojis */}
         <button type="button" onClick={() => setShowEmojiPicker(prev => !prev)} className="emoji-button" disabled={isUploading} title="Selecionar Emoji">
             <i className="fas fa-smile"></i> 
+        </button>
+
+        {/* NOVO: Botão de Áudio/Microfone */}
+        <button type="button" onClick={handleAudioClick} className={`audio-record-button ${isRecording ? 'recording' : ''}`} disabled={isUploading} title="Gravar Áudio">
+            <i className="fas fa-microphone"></i> 
         </button>
 
         {/* Botão de Anexar Imagem */}
