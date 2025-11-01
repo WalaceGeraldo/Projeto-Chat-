@@ -3,9 +3,8 @@ import Sidebar from './Sidebar';
 import ChatWindow from './ChatWindow';
 import ImageModal from './ImageModal'; 
 import './ChatScreen.css';
-import { supabase } from '../supabaseClient'; // <-- Mantenha a importação do Supabase
+import { supabase } from '../supabaseClient'; 
 
-// --- REMOVIDO: Não há mais imports do Firebase aqui ---
 
 function ChatScreen({ user, isReady, onLogout }) { 
   // --- Estados do Componente ---
@@ -21,137 +20,215 @@ function ChatScreen({ user, isReady, onLogout }) {
       activeChannelRef.current = activeChannel;
   }, [activeChannel]);
 
-  // --- Funções de Modal (Implementação simplificada) ---
+  // --- Funções de Modal e Inatividade (Mantidas) ---
   const openImageModal = useCallback((imageUrl) => { setModalImage(imageUrl); }, []);
   const closeImageModal = useCallback(() => { setModalImage(null); }, []);
-
-  // --- Lógica de Inatividade (Simplificada/Removida a dependência do socket) ---
   const resetInactivityTimer = useCallback(() => { /* ... */ }, []); 
   useEffect(() => { /* ... */ }, [resetInactivityTimer]);
 
-  // Função auxiliar para formatar a mensagem do Supabase
-  const formatSupabaseMessage = (message) => ({
-      ...message,
-      id: message.id, 
-      // O 'created_at' do Supabase já é uma string de data válida
-      timestamp: new Date(message.created_at), 
-      type: message.type || 'text',
-      content: message.content || message.caption, // Prioriza o 'content' ou 'caption'
+
+  // --- FUNÇÃO CRÍTICA: CALCULA O NOME CANÔNICO DO CANAL/DM ---
+  const getConversationId = useCallback((channel) => {
+    // Se for DM, cria um nome canônico (DM_UserA_UserB, em ordem alfabética)
+    if (channel.type === 'dm') {
+        const users = [user, channel.name].sort();
+        return `DM_${users[0]}_${users[1]}`;
+    }
+    // Para canais públicos, usa o nome simples
+    return channel.name;
+  }, [user]);
+
+
+  // Função auxiliar para formatar a mensagem
+  const formatFetchedMessage = (msg) => ({
+      id: msg.id,
+      sender: msg.sender, 
+      channel_name: msg.channel_name,
+      content: msg.content,
+      type: msg.type,
+      caption: msg.caption,
+      timestamp: new Date(msg.created_at || msg.timestamp), 
   });
 
+  // --- FUNÇÃO DE REALTIME: Recebe Nova Mensagem ---
+  const handleNewMessage = useCallback((newMessageData) => {
+    
+    // Console.log para depuração (Removível após teste)
+    console.log("[Realtime OK] Evento Recebido:", newMessageData);
+    
+    const formattedMessage = {
+        id: newMessageData.id,
+        sender: newMessageData.sender || 'Desconhecido', 
+        channel_name: newMessageData.channel_name,
+        content: newMessageData.content,
+        type: newMessageData.type,
+        caption: newMessageData.caption,
+        timestamp: new Date(newMessageData.created_at || Date.now()),
+    };
 
-  // --- NOVO useEffect: LISTENERS DO SUPABASE REALTIME ---
-  useEffect(() => {
-    if (!isReady) {
-      setIsHistoryLoading(true); 
-      return;
+    // Adiciona a mensagem ao estado global
+    setAllMessages(prevMessages => [...prevMessages, formattedMessage]);
+
+    // Lógica de Contador de Não Lidas
+    const currentConversationId = getConversationId(activeChannelRef.current);
+
+    if (formattedMessage.channel_name !== currentConversationId && formattedMessage.sender !== user) {
+        const conversationId = formattedMessage.channel_name; // O nome canônico já está no evento
+        setUnreadCounts(prevCounts => ({
+            ...prevCounts,
+            [conversationId]: (prevCounts[conversationId] || 0) + 1
+        }));
     }
+  }, [user, getConversationId]); // Adicionada dependência getConversationId
 
-    setIsHistoryLoading(true); 
-    const channelName = activeChannel.name; 
-    let realTimeSubscription = null;
 
-    // 1. FUNÇÃO PARA CARREGAR O HISTÓRICO INICIAL
-    const fetchInitialHistory = async () => {
-        try {
-            const { data, error } = await supabase
-                .from('messages')
-                .select('*')
-                .eq('channel_name', channelName) // Filtra pelo nome do canal ativo
-                .order('created_at', { ascending: true }); // Ordena por data
-            
-            if (error) throw error;
-            
-            const initialMessages = data.map(formatSupabaseMessage);
-            setAllMessages(initialMessages);
-            setIsHistoryLoading(false);
-            console.log(`[Supabase] Histórico inicial de ${channelName} carregado.`);
-        } catch (error) {
-            console.error("[Supabase] Erro ao carregar histórico:", error.message);
-            setIsHistoryLoading(false);
-        }
+  // --- FUNÇÃO CORRIGIDA: BUSCAR MENSAGENS NO SUPABASE (HISTÓRICO) ---
+  const fetchMessages = useCallback(async (channelObj) => { // Recebe o objeto {name, type, ...}
+      setIsHistoryLoading(true);
+      
+      // CRÍTICO: Usa a função auxiliar para obter o ID correto do canal/DM
+      const conversationId = getConversationId(channelObj); 
+      
+      const { data: messagesData, error: fetchError } = await supabase
+        .from('messages')
+        .select(`*`) 
+        .eq('channel_name', conversationId) // Usa o ID canônico
+        .order('created_at', { ascending: true }); 
+
+      if (fetchError) {
+          console.error("Erro ao carregar histórico de mensagens:", fetchError);
+          setIsHistoryLoading(false);
+          return [];
+      }
+
+      const formattedMessages = messagesData.map(formatFetchedMessage);
+
+      setIsHistoryLoading(false);
+      return formattedMessages;
+  }, [getConversationId]); // Adicionada dependência getConversationId
+  
+  
+  // ======================================================================
+  // --- EFEITO 1: CARREGAR HISTÓRICO E REALTIME DE MENSAGENS ---
+  // ======================================================================
+  useEffect(() => {
+    
+    // CRÍTICO: Calcula o ID da Conversa para Subscrição
+    const conversationId = getConversationId(activeChannel); 
+
+    const fetchHistory = async () => {
+        // Passa o objeto activeChannel para fetchMessages
+        const history = await fetchMessages(activeChannel); 
+        setAllMessages(history);
     };
     
-    // 2. FUNÇÃO PARA INSCREVER-SE EM TEMPO REAL
-    const subscribeToRealtime = () => {
-        // Remove a inscrição anterior, se houver
-        if (realTimeSubscription) {
-            supabase.removeChannel(realTimeSubscription);
-        }
+    let messageSubscription; 
 
-        console.log(`[Supabase Realtime] Iniciando escuta em tempo real para: ${channelName}`);
-
-        realTimeSubscription = supabase
-            .channel('chat-changes') // Nome do canal Realtime
+    if (isReady && conversationId) {
+        // 1a. Carrega o Histórico
+        fetchHistory();
+        
+        // 2. Configura a Subscrição do Realtime
+        messageSubscription = supabase
+            .channel(`messages-${conversationId}`) // Usa o ID canônico no nome do canal Supabase
             .on(
                 'postgres_changes', 
                 { 
                     event: 'INSERT', 
                     schema: 'public', 
                     table: 'messages',
-                    filter: `channel_name=eq.${channelName}`, // Filtra apenas mensagens do canal atual
+                    filter: `channel_name=eq.${conversationId}`, // Usa o ID canônico no filtro
                 },
                 (payload) => {
-                    const newMessage = formatSupabaseMessage(payload.new);
-                    console.log("[Supabase Realtime] Nova mensagem recebida:", newMessage);
-
-                    // Adiciona a nova mensagem ao estado
-                    setAllMessages(prevMessages => {
-                        const conversationId = activeChannelRef.current.name; 
-
-                        // Lógica para detectar e contar novas mensagens (se não for do usuário atual)
-                        if (newMessage.sender !== user) {
-                            setUnreadCounts(prevCounts => ({
-                                ...prevCounts,
-                                [conversationId]: (prevCounts[conversationId] || 0) + 1 
-                            }));
-                        }
-                        
-                        return [...prevMessages, newMessage];
-                    });
+                    handleNewMessage(payload.new);
                 }
             )
-            .subscribe(); // Inicia a escuta
+            .subscribe((status, error) => {
+                 if (status === 'CHANNEL_ERROR') {
+                     console.error("Erro no Canal Realtime:", error);
+                 }
+            }); 
+    }
 
-    };
-
-    // Executa as funções
-    fetchInitialHistory();
-    subscribeToRealtime();
-    
-    // 3. Simulação da Lista de Usuários Online (ainda simulado, pois a implementação nativa é complexa)
-    const users = [
-        { id: 'Ana@exemplo.com', name: 'Ana', status: 'online' }, 
-        { id: 'Bruno@exemplo.com', name: 'Bruno', status: 'online' },
-        { id: 'Carlos@exemplo.com', name: 'Carlos', status: 'idle' },
-    ];
-    setOnlineUsersList(users.filter(u => u.id !== user).map(u => ({...u, id: u.id, name: u.id})));
-    
-    // 4. Limpeza: Remove o listener do Supabase ao desmontar/mudar de canal
+    // Limpeza: Remove a inscrição
     return () => {
-        if (realTimeSubscription) {
-            supabase.removeChannel(realTimeSubscription); 
+        if (messageSubscription) {
+            supabase.removeChannel(messageSubscription);
         }
     };
-  // ATENÇÃO: A dependência 'user' garante que o Realtime reinicie se o usuário mudar
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChannel.name, user, isReady]); 
-
-
-  // --- Função para Mudar de Canal/DM e Limpar Não Lidas ---
-  const handleSelectChannel = (channelOrDm) => {
-    // Limpa as mensagens não lidas para o canal anterior
-    const prevConversationId = activeChannel.name;
     
+  }, [activeChannel, isReady, fetchMessages, handleNewMessage, getConversationId]); 
+  // ======================================================================
+
+
+  // ======================================================================
+  // --- EFEITO 2: GERENCIAMENTO DE PRESENÇA (FIXO no canal #Geral) ---
+  // ======================================================================
+  useEffect(() => {
+    if (!isReady || !user) return;
+    // ... (Código de Presença inalterado) ...
+    const PRESENCE_CHANNEL_NAME = 'Geral'; 
+    let presenceChannel;
+
+    const userPresence = { 
+        username: user, 
+        online_at: new Date().toISOString(),
+        channel: PRESENCE_CHANNEL_NAME 
+    };
+    
+    // Cria o canal de presença
+    presenceChannel = supabase.channel(`presence-${PRESENCE_CHANNEL_NAME}`, {
+        config: {
+            presence: { key: user } 
+        }
+    });
+    
+    // Ouve eventos de Presença
+    presenceChannel.on('presence', { event: 'sync' }, () => {
+        const newState = presenceChannel.presenceState();
+        
+        const onlineUsers = Object.keys(newState).map(key => {
+            const userState = newState[key][0];
+            return {
+                id: userState.username,
+                name: userState.username,
+                status: 'online'
+            };
+        }).filter(onlineUser => onlineUser.name !== user);
+        
+        setOnlineUsersList(onlineUsers); 
+    });
+
+    // Assina e Envia o Estado Inicial de Presença
+    presenceChannel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+            await presenceChannel.track(userPresence);
+        }
+    });
+        
+    // Limpeza
+    return () => {
+        if (presenceChannel) {
+            presenceChannel.untrack(); 
+            supabase.removeChannel(presenceChannel);
+        }
+    };
+    
+  }, [isReady, user, setOnlineUsersList]);
+  // ======================================================================
+
+
+  // Lógica para selecionar Canais
+  const handleSelectChannel = (channelOrDm) => {
+    // CRÍTICO: Usa getConversationId para obter o ID do canal/DM anterior para zerar as não lidas
+    const prevConversationId = getConversationId(activeChannel); 
+
     setUnreadCounts(prevCounts => ({
         ...prevCounts,
         [prevConversationId]: 0 
     }));
 
-    // Define o novo canal ativo
-    setActiveChannel(channelOrDm);
-    // Força o recarregamento do histórico
-    setAllMessages([]);
+    setActiveChannel(channelOrDm); 
   };
    
 
@@ -166,7 +243,8 @@ function ChatScreen({ user, isReady, onLogout }) {
 
   // Filtra Mensagens para Exibir na Janela Ativa
   const messagesToShow = allMessages.filter(msg => 
-    msg.channel_name === activeChannel.name
+    // CRÍTICO: Filtra as mensagens pelo ID canônico da conversa ativa
+    msg.channel_name === getConversationId(activeChannel)
   ).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
 
@@ -175,7 +253,7 @@ function ChatScreen({ user, isReady, onLogout }) {
       <Sidebar
         currentUser={user}
         channels={simulatedData.channels}
-        onlineUsers={onlineUsersList}
+        onlineUsers={onlineUsersList} 
         activeChannel={activeChannel}
         onSelectChannel={handleSelectChannel}
         onLogout={onLogout}
@@ -185,15 +263,13 @@ function ChatScreen({ user, isReady, onLogout }) {
         messagesToShow={messagesToShow}
         channel={activeChannel}
         currentUser={user}
-        onImageClick={openImageModal}
-        isHistoryLoading={isHistoryLoading}
+        onImageClick={openImageModal} 
+        isHistoryLoading={isHistoryLoading} 
       />
-
+      
+      {/* Modal de Imagem (Tela Cheia) */}
       {modalImage && (
-        <ImageModal 
-          imageUrl={modalImage} 
-          onClose={closeImageModal} 
-        />
+        <ImageModal imageUrl={modalImage} onClose={closeImageModal} />
       )}
     </div>
   );

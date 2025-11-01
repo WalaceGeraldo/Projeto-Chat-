@@ -1,3 +1,17 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
 body, #root, .App {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   height: 100vh;
@@ -13,7 +27,7 @@ body, #root, .App {
   text-align: center;
 }
 
-/* --- Estilo do Login --- */
+/* --- Estilo do Login / Onboarding Container --- */
 .login-container {
   padding: 40px;
   background-color: #1e1e1e; /* Cor de "cartão" escura */
@@ -52,13 +66,15 @@ body, #root, .App {
   cursor: pointer;
   font-size: 16px;
   font-weight: bold;
+  transition: background-color 0.2s ease;
 }
 
 .login-container button:hover {
   background-color: #0056b3;
 }
 
-/* Estilo para a tela de 'logado' (temporário) */
+/* Estilo para o botão de sair (Logout Button na Sidebar) */
+/* Este estilo é substituído pelo CSS específico da Sidebar, mas é mantido como fallback */
 button {
   background-color: #dc3545; /* Vermelho para 'Sair' */
   color: white;
@@ -72,4 +88,30 @@ button {
 
 button:hover {
   background-color: #c82333;
+}
+
+/* --- Estilos Adicionais para Onboarding (NOVO) --- */
+
+.onboarding-container {
+    max-width: 400px;
+}
+
+.onboarding-container p {
+    color: #ccc;
+    font-size: 0.95rem;
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.error-message {
+    color: #dc3545; /* Vermelho */
+    font-size: 0.85rem;
+    margin-top: -5px;
+    margin-bottom: 10px;
+    text-align: left;
+}
+
+/* Estilo para a linha divisória do formulário de login com Google */
+.login-container div[style*="margin-top: 15px"] {
+    color: #555;
 }

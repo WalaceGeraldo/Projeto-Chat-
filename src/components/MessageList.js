@@ -1,46 +1,81 @@
 import React, { useRef, useEffect } from 'react';
+import { useSignedUrl } from '../useSignedUrl'; // Importa o novo hook (Ajuste o caminho se necessário)
 
-// Adicionado onImageClick aqui
+
+// Subcomponente que lida com o carregamento assíncrono da imagem/mídia
+const MediaContent = ({ contentUrl, type, caption, onImageClick }) => {
+    
+    // O URL REST salvo é: YOUR_URL/storage/v1/object/public/chat-media/images/file.jpg
+    // Precisamos da parte "images/file.jpg" (o caminho do arquivo no Storage)
+    const urlParts = contentUrl.split('chat-media/');
+    const filePath = urlParts.length > 1 ? urlParts[1] : null; 
+    
+    // 2. Usamos o hook para obter o URL assinado (que inclui o token)
+    const signedUrl = useSignedUrl(filePath);
+
+    // Placeholder de Carregamento
+    if (!signedUrl) {
+        return (
+            <div className="media-placeholder" style={{ color: '#007bff', fontStyle: 'italic', padding: '10px 0' }}>
+                {type.includes('image') ? 'Carregando Imagem...' : 'Carregando Mídia...'}
+            </div>
+        );
+    }
+    
+    // Renderiza IMAGEM
+    if (type.includes('image')) {
+        return (
+            <img 
+                src={signedUrl} // Usa o URL temporário assinado
+                alt={caption || "Imagem enviada"} 
+                className="message-image" 
+                onClick={() => onImageClick && onImageClick(signedUrl)} // Passa o URL assinado para o modal
+            />
+        );
+    } 
+    // Renderiza ÁUDIO
+    else if (type === 'audio') {
+        return (
+            <audio controls src={signedUrl} className="message-audio-player">
+                Seu navegador não suporta o elemento de áudio.
+            </audio>
+        );
+    }
+    return null;
+};
+
+
+// Componente principal MessageList
 function MessageList({ messages, currentUser, onImageClick }) { 
   const messagesEndRef = useRef(null);
 
-  // Efeito para rolar para a última mensagem
   useEffect(() => {
-    // CORREÇÃO: Usamos verificação explícita.
     if (messagesEndRef.current) {
         messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
 
-  // Função auxiliar para renderizar o conteúdo de mídia (imagem ou áudio)
+  // Função auxiliar para renderizar o conteúdo (agora chama MediaContent)
   const renderMediaContent = (msg) => {
-      // 1. Renderiza IMAGEM (com ou sem texto)
-      if (msg.type === 'image' || msg.type === 'text-with-image') {
+      // Verifica se a mensagem tem um URL (se for imagem ou áudio)
+      if ((msg.type.includes('image') || msg.type === 'audio') && msg.content) {
           return (
-              <img 
-                  src={msg.content} 
-                  alt={msg.caption || "Imagem enviada"} 
-                  className="message-image" 
-                  onClick={() => onImageClick && onImageClick(msg.content)} 
+              <MediaContent
+                  contentUrl={msg.content} // O URL REST que salvamos no DB
+                  type={msg.type}
+                  caption={msg.caption}
+                  onImageClick={onImageClick}
               />
-          );
-      } 
-      // 2. Renderiza ÁUDIO
-      else if (msg.type === 'audio' && msg.content) {
-          return (
-              // O elemento 'controls' é essencial para mostrar o player de áudio
-              <audio controls src={msg.content} className="message-audio-player">
-                  Seu navegador não suporta o elemento de áudio.
-              </audio>
           );
       }
       return null;
   };
+  
 
   return (
     <div className="message-list">
       {Array.isArray(messages) && messages.map((msg, index) => {
-        // Validação básica do conteúdo. Agora verificamos 'content' ou 'caption'.
+        // Validação básica do conteúdo.
         if (!msg || !msg.type || (!msg.content && !msg.caption)) {
             console.warn("Renderizando MessageList: Mensagem inválida encontrada:", msg);
             return null;
@@ -54,8 +89,6 @@ function MessageList({ messages, currentUser, onImageClick }) {
             ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : '';
 
-        // Condição para exibir TEXTO/LEGENDA:
-        // Se for TEXTO PURO (type='text') OU se for uma mensagem com legenda (image/audio)
         const shouldRenderText = (msg.type === 'text') || (msg.type.includes('image') && msg.caption) || (msg.type === 'audio' && msg.caption);
 
 
@@ -69,7 +102,7 @@ function MessageList({ messages, currentUser, onImageClick }) {
             )}
             <div className="message-content">
               
-              {/* Renderiza Mídia (Imagem ou Áudio) */}
+              {/* NOVO: Chama o renderMediaContent que usa o hook assinado */}
               {renderMediaContent(msg)}
               
               {/* Renderiza o Texto/Legenda */}

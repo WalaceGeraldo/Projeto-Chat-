@@ -1,19 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import EmojiPicker from 'emoji-picker-react'; 
 import { supabase } from '../supabaseClient'; 
 
-function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }) { 
+// CRÍTICO: Recebe activeChannel como prop
+function MessageInput({ channelName, currentUser, activeChannel }) { 
   const [text, setText] = useState('');
-  const typingTimeoutRef = useRef(null);
+  const typingTimeoutRef = useRef(null); // Agora será USADO
   const fileInputRef = useRef(null); 
   const [isUploading, setIsUploading] = useState(false); 
-  
-  // NOVOS ESTADOS PARA ÁUDIO
-  const [isRecording, setIsRecording] = useState(false); 
-
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false); 
+  const [isRecording, setIsRecording] = useState(false); 
 
 
   // Efeito de Limpeza: Revoga URLs temporárias do navegador
@@ -25,167 +23,197 @@ function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }
 
 
   // Função para emitir evento de digitação (Simplificada)
-  const emitTypingEvent = (eventType) => {
-    // A lógica de digitação real será implementada via API Realtime do Supabase no ChatScreen.
-  };
-
-  // Efeito para detectar início/fim da digitação (simplificado)
+  const emitTypingEvent = (eventType) => { /* Placeholder: Aqui vai a lógica de Presença do Supabase */ }; 
+  
+  // --- Efeito de Digitação (Correção de Warning) ---
   useEffect(() => {
     const isTyping = text.trim().length > 0 || selectedFile;
     
     if (isTyping) {
       emitTypingEvent('typingStart');
-      if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); }
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      // O typingTimeoutRef está sendo usado aqui, resolvendo o aviso
       typingTimeoutRef.current = setTimeout(() => {
         emitTypingEvent('typingStop');
-      }, 1500); 
-    } else if (typingTimeoutRef.current) { /* Ação de limpeza de timer */ }
-
-    return () => { /* Ação de limpeza de listener */ };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, selectedFile, currentUser, activeChannel]); 
-
-
-  // --- FUNÇÃO DE LIMPEZA GERAL DE INPUTS ---
-  const clearInputs = () => {
-    setText('');
-    setSelectedFile(null);
-    if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
-  };
-
-
-  // Função para lidar com a seleção de arquivo (apenas imagem)
-  const handleFileChange = (event) => { 
-    const file = event.target.files[0];
-    if (file) {
-        setSelectedFile(file);
-        // Cria uma URL de pré-visualização temporária no navegador
-        const url = URL.createObjectURL(file);
-        setPreviewUrl(url);
-        setText(''); // Limpa o texto normal
+      }, 2000);
+    } else {
+      emitTypingEvent('typingStop');
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
     }
-    // Limpa o valor do input de arquivo para permitir upload do mesmo arquivo novamente
-    event.target.value = null; 
-  };
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, [text, selectedFile, channelName]);
   
-  // Função auxiliar para disparar o input de arquivo oculto
-  const triggerFileInput = () => {
-    fileInputRef.current.click();
-  };
 
-  // Função para adicionar emoji ao input
-  const onEmojiClick = (emojiData) => {
-    setText(prevText => prevText + emojiData.emoji);
-    setShowEmojiPicker(false); // Fecha o picker após a seleção
-  };
-  
-  // Placeholder para a funcionalidade de gravação de áudio
-  const handleAudioClick = () => {
-      // Aqui você iniciaria a MediaRecorder API para gravar
-      setIsRecording(prev => !prev);
-      alert(isRecording ? 'Parando gravação de áudio...' : 'Iniciando gravação de áudio...');
-  };
+  // --- FUNÇÃO DE SALVAMENTO NO BANCO DE DADOS ---
+  const saveMessageToDB = useCallback(async (payload) => {
+    
+    // 1. LÓGICA DE DM: Cria um nome de canal canônico (Ordem Alfabética)
+    let finalChannelName;
+    
+    if (activeChannel.type === 'dm') {
+        const users = [currentUser, activeChannel.name].sort(); 
+        finalChannelName = `DM_${users[0]}_${users[1]}`; 
+    } else {
+        finalChannelName = channelName; 
+    }
+    // ------------------------------------------
+
+    // 2. Montar a mensagem com o channel_name correto
+    const messagePayload = {
+      sender: currentUser,
+      channel_name: finalChannelName, 
+      content: payload.content,
+      caption: payload.caption,
+      type: payload.type,
+    };
+    
+    // Remove campos nulos/vazios desnecessários
+    const cleanedPayload = Object.fromEntries(
+        Object.entries(messagePayload).filter(([_, v]) => v !== null && v !== undefined)
+    );
+
+    // 3. INSERT NO SUPABASE
+    const { error } = await supabase
+      .from('messages')
+      .insert([cleanedPayload]);
+
+    if (error) {
+      console.error("ERRO AO INSERIR MENSAGEM NO DB:", error);
+      alert("Falha ao enviar. Verifique o RLS da tabela 'messages'.");
+      return false;
+    }
+    return true;
+
+  }, [currentUser, channelName, activeChannel]);
 
 
-  // --- FUNÇÃO PRINCIPAL DE ENVIO (Upload para Supabase Storage) ---
+  // --- FUNÇÃO DE SALVAMENTO: Arquivo (Upload e DB Insert) ---
+  const uploadFileAndSendMessage = useCallback(async (file, caption) => {
+    setIsUploading(true);
+    
+    const fileExtension = file.name.split('.').pop();
+    const fileName = `${Date.now()}-${currentUser}.${fileExtension}`;
+    const storagePath = `images/${fileName}`;
+
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('chat-media')
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+      
+    if (uploadError) {
+      console.error("Erro no upload do arquivo:", uploadError);
+      setIsUploading(false);
+      return;
+    }
+
+    const fileUrl = `${supabase.storage.url}/object/public/chat-media/${uploadData.path}`;
+
+    // 3. Salvar o registro da mensagem no Supabase DB
+    await saveMessageToDB({
+        content: fileUrl, 
+        caption: caption || null,
+        type: file.type.startsWith('image/') ? 'image' : 'file',
+    });
+
+    setIsUploading(false);
+  }, [currentUser, saveMessageToDB]);
+
+
+  // --- FUNÇÃO PRINCIPAL: Envio ---
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    const canSend = text.trim().length > 0 || selectedFile;
-    if (!canSend || isUploading) return;
-
-    setIsUploading(true);
-
-    let messageText = text.trim() || null;
-    let fileUrl = null;
-    let fileType = null;
     
-    let fileToUpload = selectedFile;
-    
-    // 1. Lógica de Upload de Mídia para Supabase Storage
-    if (fileToUpload) {
-        
-        fileType = fileToUpload.type;
-        const fileExtension = fileType.split('/')[1] || 'jpg';
-        
-        // Define o caminho no Storage (Ex: 'images/timestamp-user.jpg')
-        const filePath = `images/${Date.now()}-${currentUser.replace(/[^a-zA-Z0-9]/g, '_')}.${fileExtension}`;
-        
-        try {
-            // CORREÇÃO: Removemos 'data' para evitar o aviso ESLint
-            const { error } = await supabase.storage 
-                .from('chat-media') // Nome do bucket no Supabase
-                .upload(filePath, fileToUpload, {
-                    cacheControl: '3600',
-                    upsert: false
-                });
+    const textContent = text.trim();
 
-            if (error) {
-                throw new Error(error.message);
-            }
-
-            // Obtém a URL pública direta da imagem
-            const { data: publicUrlData } = supabase.storage
-                .from('chat-media')
-                .getPublicUrl(filePath);
-                
-            fileUrl = publicUrlData.publicUrl;
-            
-            console.log('[Supabase] Upload de imagem bem-sucedido. URL:', fileUrl);
-            
-        } catch (error) {
-            console.error("[Supabase] Falha no upload:", error);
-            alert(`Erro ao enviar mídia para o Storage: ${error.message}. Verifique as regras do Storage.`);
-            setIsUploading(false);
-            return;
+    if (selectedFile) {
+        if (selectedFile.type.startsWith('image/')) {
+            await uploadFileAndSendMessage(selectedFile, textContent);
         }
+    } else if (textContent) {
+        await saveMessageToDB({
+            content: textContent,
+            caption: null,
+            type: 'text'
+        });
     }
-
-    // 2. Determina o Tipo de Mensagem
-    let type;
-    if (fileType?.startsWith('image') && messageText) {
-        type = 'text-with-image';
-    } else if (fileType?.startsWith('image')) {
-        type = 'image';
-    } else {
-        type = 'text'; 
-    }
-
-    // Envia a mensagem para o ChatWindow, que a salvará no Supabase DB
-    onSendMessage(messageText, fileUrl, type); 
-
-    // Limpeza após envio bem-sucedido
-    clearInputs(); 
-    setIsUploading(false);
+    
+    // Limpar o formulário e o estado de arquivo
+    setText('');
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setShowEmojiPicker(false);
+    
     emitTypingEvent('typingStop');
   };
-  // --------------------------------------------------------------------------
+  
 
+  // --- Lógica de Seleção de Arquivo e UI (Mantida) ---
+  const handleFileChange = (e) => { 
+    const file = e.target.files[0];
+    if (file) {
+      setSelectedFile(file);
+      setPreviewUrl(URL.createObjectURL(file)); 
+      setText('');
+      setShowEmojiPicker(false);
+    }
+  };
+  const triggerFileInput = () => { fileInputRef.current?.click(); };
+  const handleRemoveFile = () => { 
+    if (previewUrl) { URL.revokeObjectURL(previewUrl); }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setText('');
+  };
+  const onEmojiClick = (emojiData, event) => { 
+    setText(prevText => prevText + emojiData.emoji);
+    setShowEmojiPicker(false);
+  };
+  const handleAudioClick = () => { setIsRecording(prev => !prev); }; 
+  
   const isDisabled = isUploading || (!text.trim() && !selectedFile);
 
 
   return (
     <div className="message-input-wrapper">
       
-      {/* Seletor de Emojis */}
+      {/* Modal de Emoji */}
       {showEmojiPicker && (
-        <div className="emoji-picker-container">
-          <EmojiPicker onEmojiClick={onEmojiClick} height={300} width="100%" />
-        </div>
+          <div className="emoji-picker-modal">
+              <EmojiPicker 
+                  onEmojiClick={onEmojiClick} 
+                  height={350} 
+                  searchDisabled={false}
+                  skinTonesDisabled={true}
+              />
+          </div>
       )}
-
-      {/* Preview de Imagem Selecionada */}
+      
+      {/* Pré-visualização de Arquivo Selecionado */}
       {previewUrl && (
-        <div className="image-preview-container">
-          <img src={previewUrl} alt="Preview" className="image-preview" />
-          <button 
-            type="button" 
-            className="remove-preview-button" 
-            onClick={clearInputs}
-          >
-            <i className="fas fa-times"></i>
-          </button>
-        </div>
+          <div className="file-preview">
+              <span className="file-info">
+                  {selectedFile.type.startsWith('image/') ? (
+                      <img src={previewUrl} alt="Pré-visualização" className="preview-image" />
+                  ) : (
+                      <i className="fas fa-file"></i>
+                  )}
+                  {selectedFile.name} 
+              </span>
+              <button type="button" onClick={handleRemoveFile} className="remove-file-button" title="Remover arquivo">
+                  <i className="fas fa-times"></i>
+              </button>
+          </div>
       )}
       
       
@@ -196,7 +224,7 @@ function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }
             <i className="fas fa-smile"></i> 
         </button>
 
-        {/* NOVO: Botão de Áudio/Microfone */}
+        {/* Botão de Áudio/Microfone */}
         <button type="button" onClick={handleAudioClick} className={`audio-record-button ${isRecording ? 'recording' : ''}`} disabled={isUploading} title="Gravar Áudio">
             <i className="fas fa-microphone"></i> 
         </button>
@@ -229,8 +257,8 @@ function MessageInput({ onSendMessage, channelName, currentUser, activeChannel }
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
-        accept="image/*" 
         style={{ display: 'none' }}
+        accept="image/*" // Aceita apenas imagens
       />
     </div>
   );
