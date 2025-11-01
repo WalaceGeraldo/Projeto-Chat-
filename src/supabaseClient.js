@@ -4,23 +4,26 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 
-// Verifica se as chaves existem antes de criar o cliente
+// Valores de fallback (para evitar o crash)
+const DUMMY_URL = "https://dummy.supabase.co";
+const DUMMY_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.DUMMY";
+
 if (!supabaseUrl || !supabaseAnonKey) {
-    console.error("ERRO DE CONFIGURAÇÃO: As chaves REACT_APP_SUPABASE_URL e REACT_APP_SUPABASE_ANON_KEY não estão definidas no arquivo .env.local!");
+    console.error(
+        "ERRO CRÍTICO: Chaves Supabase ausentes. Verifique o arquivo .env.local e o formato REACT_APP_."
+    );
 }
 
-// Cria o cliente Supabase com configuração explícita de storage
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    // CRÍTICO: Define explicitamente o uso do localStorage.
-    // Isso garante que o cliente saiba onde procurar a sessão imediatamente
-    // e resolve problemas de race condition na inicialização.
-    storage: window.localStorage, 
-    // Garante que a sessão seja mantida. (Padrão: true)
-    persistSession: true,
-    // Garante que tokens expirados sejam renovados automaticamente.
-    autoRefreshToken: true, 
-    // Garante que o evento de sessão seja lido corretamente na inicialização.
-    detectSessionInUrl: true,
-  }
-});
+// Cria o cliente Supabase: removemos a configuração 'storage' explícita
+export const supabase = createClient(
+    supabaseUrl || DUMMY_URL, 
+    supabaseAnonKey || DUMMY_KEY, 
+    {
+        auth: {
+            // REMOVIDO: storage: window.localStorage, (Confia no fallback do Supabase)
+            persistSession: true,
+            autoRefreshToken: true, 
+            detectSessionInUrl: true,
+        }
+    }
+);

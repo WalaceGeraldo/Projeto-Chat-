@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from './supabaseClient'; // Importa o cliente Supabase
+import { supabase } from './supabaseClient';
 import LoginScreen from './components/LoginScreen';
-import OnboardingScreen from './components/OnboardingScreen'; // Importa a nova tela
+import OnboardingScreen from './components/OnboardingScreen'; 
 import ChatScreen from './components/ChatScreen'; 
 import './App.css';
 
@@ -38,7 +38,7 @@ function App() {
   }, []); 
 
 
-  // --- 2. EFEITO DE INICIALIZAÇÃO E OUVINTE DE SESSÃO (CORRIGIDO PARA RECARGA) ---
+  // --- 2. EFEITO DE INICIALIZAÇÃO E OUVINTE DE SESSÃO ---
   useEffect(() => {
     
     const checkSessionAndLoadProfile = async () => {
@@ -54,14 +54,14 @@ function App() {
             setUser(initialUser);
             
             if (initialUser) {
-                // CRÍTICO: Espera o perfil ser carregado antes de marcar como pronto
-                await fetchUserProfile(initialUser); 
+                // CRÍTICO: Não usa await, o que permite que a UI carregue mais rápido
+                fetchUserProfile(initialUser); 
             }
             
         } catch (e) {
             console.error("ERRO CRÍTICO NA INICIALIZAÇÃO:", e);
         } finally {
-            // Garante que o aplicativo SEMPRE saia da tela de loading, mesmo em caso de erro.
+            // Garante que o aplicativo SEMPRE saia da tela de loading
             setIsReady(true); 
         }
     };
@@ -79,7 +79,7 @@ function App() {
       }
     );
 
-    // Chama a função principal de verificação de sessão APENAS UMA VEZ
+    // Inicia a verificação de sessão
     checkSessionAndLoadProfile();
 
 
@@ -101,7 +101,7 @@ function App() {
     const handleLoginPlaceholder = () => { /* Supabase Listener faz o trabalho real */ }; 
     content = <LoginScreen onLogin={handleLoginPlaceholder} />; 
   } else if (profile === null) { 
-    // 3.3 Tela de Configuração (Onboarding) - CRÍTICO: Verifica estritamente se profile é NULL
+    // 3.3 Tela de Configuração (Onboarding) - Se o perfil for NULL (E-mail/Senha)
     
     const handleProfileUpdate = (newUsername) => {
         // Callback: Atualiza o estado local do perfil para sair do Onboarding
