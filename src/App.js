@@ -14,27 +14,34 @@ function App() {
   // Controla se a sessão inicial foi carregada
   const [isReady, setIsReady] = useState(false); 
 
-  // --- 1. FUNÇÃO PARA CARREGAR O PERFIL (USERNAME) ---
+  // --- 1. FUNÇÃO PARA CARREGAR O PERFIL (USERNAME) (CORRIGIDA) ---
   const fetchUserProfile = useCallback(async (supabaseUser) => {
     if (!supabaseUser) {
         setProfile(null);
         return;
     }
     
-    // Busca o nome de usuário ('username') na tabela 'profiles'
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', supabaseUser.id)
-      .single(); 
-
-    // O código PGRST116 significa "nenhum resultado encontrado" (normal para usuários novos)
-    if (error && error.code !== 'PGRST116') { 
-        console.error('Erro ao buscar perfil:', error);
+    try {
+      // Busca o nome de usuário ('username') na tabela 'profiles'
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', supabaseUser.id)
+        .single(); 
+  
+      if (error && error.code !== 'PGRST116') { 
+          // Loga o erro de DB, mas não trava a UI
+          console.error('Erro ao buscar perfil:', error);
+      }
+      
+      // Se não houver erro, define o perfil (o que pode ser NULL se não for encontrado)
+      setProfile(data ? data.username : null);
+    } catch (e) {
+      // CRÍTICO: Captura qualquer erro assíncrono (rede/DB) e garante que o perfil seja NULL, 
+      // o que permite que o App continue.
+      console.error("Falha na busca de perfil (network/DB):", e);
+      setProfile(null); 
     }
-    
-    // Define o perfil. Se o perfil for NULL no DB, o estado será NULL.
-    setProfile(data ? data.username : null);
   }, []); 
 
 
@@ -54,14 +61,15 @@ function App() {
             setUser(initialUser);
             
             if (initialUser) {
-                // CRÍTICO: Não usa await, o que permite que a UI carregue mais rápido
-                fetchUserProfile(initialUser); 
+                // Se houver usuário, carrega o perfil antes de marcar como pronto
+                await fetchUserProfile(initialUser);
             }
             
         } catch (e) {
+            // Tratamento de erro geral: captura falhas de rede ou Supabase
             console.error("ERRO CRÍTICO NA INICIALIZAÇÃO:", e);
         } finally {
-            // Garante que o aplicativo SEMPRE saia da tela de loading
+            // CRÍTICO: Garante que o aplicativo SEMPRE saia da tela de loading
             setIsReady(true); 
         }
     };
@@ -79,7 +87,6 @@ function App() {
       }
     );
 
-    // Inicia a verificação de sessão
     checkSessionAndLoadProfile();
 
 
@@ -101,16 +108,15 @@ function App() {
     const handleLoginPlaceholder = () => { /* Supabase Listener faz o trabalho real */ }; 
     content = <LoginScreen onLogin={handleLoginPlaceholder} />; 
   } else if (profile === null) { 
-    // 3.3 Tela de Configuração (Onboarding) - Se o perfil for NULL (E-mail/Senha)
+    // 3.3 Tela de Configuração (Onboarding) - CRÍTICO: Se o perfil for NULL
     
     const handleProfileUpdate = (newUsername) => {
-        // Callback: Atualiza o estado local do perfil para sair do Onboarding
         setProfile(newUsername);
     };
     
     content = (
         <OnboardingScreen 
-            user={user} // Passa o objeto Auth User (com ID)
+            user={user} 
             onProfileUpdated={handleProfileUpdate} 
         />
     );

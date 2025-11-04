@@ -26,20 +26,7 @@ function ChatScreen({ user, isReady, onLogout }) {
   const resetInactivityTimer = useCallback(() => { /* ... */ }, []); 
   useEffect(() => { /* ... */ }, [resetInactivityTimer]);
 
-
-  // --- FUNÇÃO CRÍTICA: CALCULA O NOME CANÔNICO DO CANAL/DM ---
-  const getConversationId = useCallback((channel) => {
-    // Se for DM, cria um nome canônico (DM_UserA_UserB, em ordem alfabética)
-    if (channel.type === 'dm') {
-        const users = [user, channel.name].sort();
-        return `DM_${users[0]}_${users[1]}`;
-    }
-    // Para canais públicos, usa o nome simples
-    return channel.name;
-  }, [user]);
-
-
-  // Função auxiliar para formatar a mensagem
+  // Função auxiliar para formatar a mensagem (usada no fetchMessages)
   const formatFetchedMessage = (msg) => ({
       id: msg.id,
       sender: msg.sender, 
@@ -50,10 +37,19 @@ function ChatScreen({ user, isReady, onLogout }) {
       timestamp: new Date(msg.created_at || msg.timestamp), 
   });
 
+  // --- FUNÇÃO CRÍTICA: CALCULA O NOME CANÔNICO DO CANAL/DM ---
+  const getConversationId = useCallback((channel) => {
+    if (channel.type === 'dm') {
+        const users = [user, channel.name].sort();
+        return `DM_${users[0]}_${users[1]}`;
+    }
+    return channel.name;
+  }, [user]);
+
   // --- FUNÇÃO DE REALTIME: Recebe Nova Mensagem ---
   const handleNewMessage = useCallback((newMessageData) => {
     
-    // Console.log para depuração (Removível após teste)
+    // Console.log para depuração 
     console.log("[Realtime OK] Evento Recebido:", newMessageData);
     
     const formattedMessage = {
@@ -70,59 +66,61 @@ function ChatScreen({ user, isReady, onLogout }) {
     setAllMessages(prevMessages => [...prevMessages, formattedMessage]);
 
     // Lógica de Contador de Não Lidas
-    const currentConversationId = getConversationId(activeChannelRef.current);
-
-    if (formattedMessage.channel_name !== currentConversationId && formattedMessage.sender !== user) {
-        const conversationId = formattedMessage.channel_name; // O nome canônico já está no evento
+    if (formattedMessage.channel_name !== activeChannelRef.current.name && formattedMessage.sender !== user) {
+        const conversationId = formattedMessage.channel_name;
         setUnreadCounts(prevCounts => ({
             ...prevCounts,
             [conversationId]: (prevCounts[conversationId] || 0) + 1
         }));
     }
-  }, [user, getConversationId]); // Adicionada dependência getConversationId
+  }, [user]);
 
 
-  // --- FUNÇÃO CORRIGIDA: BUSCAR MENSAGENS NO SUPABASE (HISTÓRICO) ---
-  const fetchMessages = useCallback(async (channelObj) => { // Recebe o objeto {name, type, ...}
+  // --- FUNÇÃO: BUSCAR MENSAGENS NO SUPABASE (HISTÓRICO) ---
+  const fetchMessages = useCallback(async (channelObj) => {
       setIsHistoryLoading(true);
       
-      // CRÍTICO: Usa a função auxiliar para obter o ID correto do canal/DM
-      const conversationId = getConversationId(channelObj); 
-      
-      const { data: messagesData, error: fetchError } = await supabase
-        .from('messages')
-        .select(`*`) 
-        .eq('channel_name', conversationId) // Usa o ID canônico
-        .order('created_at', { ascending: true }); 
+      try {
+          const conversationId = getConversationId(channelObj); 
+          
+          const { data: messagesData, error: fetchError } = await supabase
+            .from('messages')
+            .select(`*`) 
+            .eq('channel_name', conversationId)
+            .order('created_at', { ascending: true })
+            .limit(500);
 
-      if (fetchError) {
-          console.error("Erro ao carregar histórico de mensagens:", fetchError);
-          setIsHistoryLoading(false);
+          if (fetchError) {
+              throw fetchError; 
+          }
+
+          const formattedMessages = messagesData.map(formatFetchedMessage);
+
+          return formattedMessages;
+          
+      } catch (e) {
+          console.error("ERRO CRÍTICO no carregamento de histórico (Timeout/Permissão):", e);
           return [];
+      } finally {
+          // CRÍTICO: Garante que o estado de loading SEMPRE seja DESATIVADO
+          setIsHistoryLoading(false);
       }
+  }, [getConversationId]);
 
-      const formattedMessages = messagesData.map(formatFetchedMessage);
 
-      setIsHistoryLoading(false);
-      return formattedMessages;
-  }, [getConversationId]); // Adicionada dependência getConversationId
-  
-  
   // ======================================================================
-  // --- EFEITO 1: CARREGAR HISTÓRICO E REALTIME DE MENSAGENS ---
+  // --- EFEITO 1: CARREGAR HISTÓRICO E REALTIME DE MENSAGENS (CORRIGIDO) ---
   // ======================================================================
   useEffect(() => {
     
-    // CRÍTICO: Calcula o ID da Conversa para Subscrição
-    const conversationId = getConversationId(activeChannel); 
-
+    // Função Assíncrona para Histórico (chamada interna do useEffect)
     const fetchHistory = async () => {
-        // Passa o objeto activeChannel para fetchMessages
         const history = await fetchMessages(activeChannel); 
         setAllMessages(history);
     };
     
     let messageSubscription; 
+    const conversationId = getConversationId(activeChannel);
 
     if (isReady && conversationId) {
         // 1a. Carrega o Histórico
@@ -130,14 +128,14 @@ function ChatScreen({ user, isReady, onLogout }) {
         
         // 2. Configura a Subscrição do Realtime
         messageSubscription = supabase
-            .channel(`messages-${conversationId}`) // Usa o ID canônico no nome do canal Supabase
+            .channel(`messages-${conversationId}`) 
             .on(
                 'postgres_changes', 
                 { 
                     event: 'INSERT', 
                     schema: 'public', 
                     table: 'messages',
-                    filter: `channel_name=eq.${conversationId}`, // Usa o ID canônico no filtro
+                    filter: `channel_name=eq.${conversationId}`,
                 },
                 (payload) => {
                     handleNewMessage(payload.new);
@@ -150,14 +148,15 @@ function ChatScreen({ user, isReady, onLogout }) {
             }); 
     }
 
-    // Limpeza: Remove a inscrição
+    // Limpeza: Remove a inscrição ao trocar de canal ou desmontar
     return () => {
+        // CRÍTICO: Limpeza síncrona que resolve o race condition de limpeza.
         if (messageSubscription) {
             supabase.removeChannel(messageSubscription);
         }
     };
     
-  }, [activeChannel, isReady, fetchMessages, handleNewMessage, getConversationId]); 
+  }, [activeChannel, isReady, handleNewMessage, getConversationId, fetchMessages]); 
   // ======================================================================
 
 
@@ -166,7 +165,7 @@ function ChatScreen({ user, isReady, onLogout }) {
   // ======================================================================
   useEffect(() => {
     if (!isReady || !user) return;
-    // ... (Código de Presença inalterado) ...
+    
     const PRESENCE_CHANNEL_NAME = 'Geral'; 
     let presenceChannel;
 
@@ -206,11 +205,13 @@ function ChatScreen({ user, isReady, onLogout }) {
         }
     });
         
-    // Limpeza
+    // Limpeza: Roda apenas quando o componente ChatScreen é desmontado (logout)
     return () => {
         if (presenceChannel) {
-            presenceChannel.untrack(); 
-            supabase.removeChannel(presenceChannel);
+            // CRÍTICO: O untrack() é assíncrono, mas a remoção do canal é mais segura após o untrack.
+            presenceChannel.untrack().then(() => {
+                supabase.removeChannel(presenceChannel);
+            }).catch(e => console.error("Erro ao limpar canal de Presença:", e));
         }
     };
     
@@ -220,7 +221,6 @@ function ChatScreen({ user, isReady, onLogout }) {
 
   // Lógica para selecionar Canais
   const handleSelectChannel = (channelOrDm) => {
-    // CRÍTICO: Usa getConversationId para obter o ID do canal/DM anterior para zerar as não lidas
     const prevConversationId = getConversationId(activeChannel); 
 
     setUnreadCounts(prevCounts => ({
@@ -243,7 +243,6 @@ function ChatScreen({ user, isReady, onLogout }) {
 
   // Filtra Mensagens para Exibir na Janela Ativa
   const messagesToShow = allMessages.filter(msg => 
-    // CRÍTICO: Filtra as mensagens pelo ID canônico da conversa ativa
     msg.channel_name === getConversationId(activeChannel)
   ).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
